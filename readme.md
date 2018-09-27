@@ -62,7 +62,7 @@ python python/generator.py 2>> errors.txt
 ```
 
 ### __Redirecting a file into `stdin`__
-So we have our test data from last time saved. How do we use it? We could always copy the contents of our file to our clipboard and paste it into another running program. But why would we? The `<` operator redirects the file on the right into the `stdin` of the program on the left. Now would be a good time to have another program to consume this data.
+So we have our test data from last time saved. How do we use it? We could always copy the contents of our file to our clipboard and paste it into another running program. But why would we? The `<` operator redirects the file on the right into the `stdin` of the program on the left. Now would be a good time to have such a program to consume our data.
 
 ----
 
@@ -100,7 +100,13 @@ Now our pipeline looks a bit shorter:
 
 `Generator` => `Transformer`
 
-    An aside: you may have noticed the additional `-u` switch above. The streams we cover here can be *buffered*, which means that data is saved and sent in batches. The size of said buffer is completely up to the program in question. By default, python's buffer size is large enough that the small amount of data being printed here results in the programs in our pipeline being processed serially, rather than concurrently. Future python programs will use the `-u` switch if they're on the sending end of a pipe operator. Java users need not worry here.
+    An aside: you may have noticed the additional `-u` switch above. The streams we cover here can be *buffered*, which means that data is saved and sent in batches. The size of said buffer is completely up to the program in question. By default, python's buffer size is large enough that the small amount of data being printed here results in the programs in our pipeline being processed serially, rather than concurrently. Future python commands will use the `-u` switch if they're on the sending end of a pipe operator. Java users need not worry here.
+
+If you want to pipe *both* `stdout` and `stderr` into another program, you may use the following:
+```
+python -u python/generator.py |& python python/transformer.py
+```
+Do note, however, that `Transformer` stops reading input after the first failure to parse an integer.
 
 ### __Combining pipes and redirection__
 
@@ -123,3 +129,46 @@ python -u python/generator.py 2> errors1.txt | python python/transformer.py 2> e
 ### __Piping `stderr`__
 
 Here's where things really start to heat up. Imagine you have a long-running process running on a production server. It could be a web server, a Minecraft server, or anything with a command-line interface. It may occasionally encounter a non-fatal error and print a message to `stderr`. Unless you want to manually check server logs, it'd probably be a good idea to be notified in such a scenario. If the process wasn't written by you, it may not be feasible to modify it to send an email or notification in the case of such an error.
+
+Here's where we'll introduce the final program, `ErrorHandler`.
+
+----
+
+#### Program: ErrorHandler
+This program lives in `error_handler.py` and `ErrorHandler.java`. Its responsiblity is to receive errors via `stdin` and notify us. For simplicity's sake, the workshop version simply reprints each line given to it. A more robust version is provided but won't be covered, in `text_errors_threaded.py`. For now, use your imagination.
+
+----
+
+To accomplish this, we'll need to be able to pipe `stderr` into another program's `stdin`. As covered earlier, the pipe operator can only redirect either `stdout` *or* `stdout` and `stderr` to another program. We can work around this by reassigning `stdout` and `stderr`.
+
+Consider the pseudocode below for swapping two variables:
+```python
+a = 1
+b = 2
+
+temp = a
+a = b
+b = temp
+```
+Note that we must assign `a` to temporary variable in order to accomplish the swap. We'll perform a similar operation to accomplish swapping `stdout` and `stderr`:
+```
+<command1> 3>&1 1>&2 2>&3 | <command2>
+```
+The `>` operator doesn't only work on files! Instead, it operates on file *descriptors*. Without getting into too much detail, that means we aren't limited to files on our hard drive. `3>&1` is synonymous with the `temp = a` line in our pseudocode, and reads as 'redirect the stream 3 to file descriptor 1'. Stream 3 doesn't exist yet, so it is created on the fly. File descriptor 1 is `stdout`, as mentioned previously. `1>&2` maps `stdout` to `stderr`, and `2>&3` maps `stderr` to wherever `&3` points to. That was a lot to digest, so let's apply it.
+```
+python -u python/generator.py 3>&1 1>&2 2>&3 | python python/error_handler.py`
+```
+Notice that every error emitted by `Generator` is immediately picked up and 'handled' by `ErrorHandler`. We could now implement any error-handling logic we want within `ErrorHandler`. Do you want to send a text to your phone? Do you want a slack notification in your team's bugs channel? Do you want an email sent to the CTO of whatever company wrote the buggy software? The possiblities are endless.
+
+----
+
+Following are more examples, tying together previous examples.
+
+* error handling for transformed data
+```
+(python -u python/generator.py | python python/transformer.py) 3>&1 1>&2 2>&3 | python python/error_handler.py
+```
+* redirect transformed data to file
+```
+((python -u python/generator.py | python python/transformer.py) 3>&1 1>&2 2>&3 | python python/error_handler.py) 2> output.txt
+```
